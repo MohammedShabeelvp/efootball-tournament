@@ -1,0 +1,10 @@
+node_modules/
+frontend/dist/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+db.sqlite3
+media/
+staticfiles/

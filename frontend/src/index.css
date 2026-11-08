@@ -1,0 +1,83 @@
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Jost:wght@300;400;500;600&display=swap");
+@import "tailwindcss";
+
+/* Black · burgundy · gold · smoke white. Corners are kept almost square. */
+@theme {
+  --color-ink: #0b0a0b;
+  --color-coal: #151214;
+  --color-burgundy: #7a1f33;
+  --color-burgundy-deep: #4a1220;
+  --color-gold: #c9a24b;
+  --color-smoke: #f2efea;
+
+  --font-display: "Cormorant Garamond", Georgia, serif;
+  --font-sans: Jost, system-ui, sans-serif;
+
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 3px;
+  --radius-xl: 3px;
+  --radius-2xl: 4px;
+}
+
+@layer base {
+  html { background: var(--color-ink); }
+  body { background: var(--color-ink); color: var(--color-smoke); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: 0.01em; font-weight: 600; }
+  :focus-visible { outline: 2px solid var(--color-gold); outline-offset: 2px; }
+  select option { background: var(--color-coal); color: var(--color-smoke); }
+}
+
+@layer components {
+  .card { background: var(--color-coal); border: 1px solid rgb(242 239 234 / 0.1); }
+  .card-hover { transition: border-color 0.25s, transform 0.25s; }
+  .card-hover:hover { border-color: rgb(201 162 75 / 0.7); transform: translateY(-2px); }
+
+  .eyebrow { font-size: 0.68rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-gold); font-weight: 500; }
+  .rule { height: 1px; background: linear-gradient(90deg, var(--color-gold), transparent); }
+
+  .input {
+    width: 100%; background: var(--color-ink); color: var(--color-smoke);
+    border: 1px solid rgb(242 239 234 / 0.2); padding: 0.6rem 0.75rem; font-size: 0.9rem;
+    transition: border-color 0.2s;
+  }
+  .input:focus { border-color: var(--color-gold); outline: none; }
+  .input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Buttons: a gold fill sweeps up on hover, presses in on click */
+  .btn {
+    position: relative; isolation: isolate; overflow: hidden;
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+    padding: 0.65rem 1.15rem; border: 1px solid var(--color-gold);
+    font-size: 0.72rem; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--color-smoke); background: transparent; cursor: pointer;
+    transition: color 0.3s, border-color 0.3s, transform 0.15s;
+  }
+  .btn::before {
+    content: ""; position: absolute; inset: 0; z-index: -1;
+    background: var(--color-gold); transform: translateY(101%); transition: transform 0.3s ease;
+  }
+  .btn:hover:not(:disabled)::before { transform: translateY(0); }
+  .btn:hover:not(:disabled) { color: var(--color-ink); }
+  .btn:active:not(:disabled) { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-primary { background: var(--color-burgundy); }
+  .btn-ghost { border-color: rgb(242 239 234 / 0.28); }
+  .btn-ghost:hover:not(:disabled) { border-color: var(--color-gold); }
+  .btn-danger { border-color: var(--color-burgundy); }
+  .btn-danger::before { background: var(--color-burgundy); }
+  .btn-danger:hover:not(:disabled) { color: var(--color-smoke); }
+  .btn-sm { padding: 0.4rem 0.75rem; font-size: 0.64rem; }
+
+  .spin {
+    width: 0.9rem; height: 0.9rem; border: 2px solid currentColor; border-right-color: transparent;
+    border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block;
+  }
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
