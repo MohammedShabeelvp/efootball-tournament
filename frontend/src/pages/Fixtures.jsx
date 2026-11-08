@@ -4,7 +4,7 @@ import { api, useApi } from "../api.js";
 import MatchRow from "../components/MatchRow.jsx";
 import ScoreEditor from "../components/ScoreEditor.jsx";
 import { useAuth } from "../auth.jsx";
-import { Empty, ErrorBox, Spinner } from "../components/ui.jsx";
+import { Empty, ErrorBox, Notice, Spinner } from "../components/ui.jsx";
 
 const LABEL = "eyebrow mb-2 block";
 
@@ -18,6 +18,7 @@ export default function Fixtures() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedTeam, setSelectedTeam] = useState("all");
   const [venueFilter, setVenueFilter] = useState("all");
+  const [notice, setNotice] = useState(null);
 
   // Matches grouped by round
   const rounds = useMemo(() => {
@@ -100,6 +101,8 @@ export default function Fixtures() {
 
   return (
     <div className="space-y-5">
+      <Notice notice={notice} />
+
       {/* Filters */}
       <div className="card grid gap-4 p-4 md:grid-cols-3">
         <div>
@@ -199,7 +202,15 @@ export default function Fixtures() {
                     <ScoreEditor
                       key={`${match.id}-${match.home_goals}-${match.away_goals}`}
                       match={match}
-                      onSaved={reload}
+                      onSaved={(result) => {
+                        reload();
+                        if (result?.knockout_created) {
+                          setNotice({
+                            type: "ok",
+                            text: "That was the last league match. The season has ended and the knockout fixtures were created.",
+                          });
+                        }
+                      }}
                     />
                   )}
                 </div>

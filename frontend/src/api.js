@@ -234,6 +234,7 @@ export const api = {
     }),
 
   // KNOCKOUT (one per season)
+  buildKnockout: (seasonId) => request(`/seasons/${seasonId}/knockout/build/`, { method: "POST" }),
   knockout: (seasonId) => request(`/seasons/${seasonId}/knockout/`),
   createKnockout: (seasonId, body) =>
     request(`/seasons/${seasonId}/knockout/`, { method: "POST", body }),

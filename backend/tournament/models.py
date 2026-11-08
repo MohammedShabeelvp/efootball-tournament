@@ -136,7 +136,7 @@ class Match(ResultMixin):
 class KnockoutStage(models.Model):
     """Knockout configuration for one finished league season."""
 
-    STATUS = [("setup", "Setup"), ("ongoing", "Ongoing"), ("finished", "Finished")]
+    STATUS = [("planned", "Planned"), ("setup", "Setup"), ("ongoing", "Ongoing"), ("finished", "Finished")]
 
     season = models.OneToOneField(Season, on_delete=models.CASCADE, related_name="knockout_stage")
     qualifying_teams = models.PositiveSmallIntegerField()

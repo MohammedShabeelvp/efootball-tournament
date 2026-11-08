@@ -23,8 +23,8 @@ export default function ScoreEditor({ match, onSaved }) {
 
     setBusy(true);
     try {
-      await api.setScore(match.id, h, a);
-      onSaved();
+      const result = await api.setScore(match.id, h, a);
+      onSaved(result);
     } catch (e) {
       setError(e.message);
     } finally {

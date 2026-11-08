@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOutletContext, useParams } from "react-router-dom";
 import { api, useApi } from "../api.js";
 import { useAuth } from "../auth.jsx";
-import { Btn, Empty, ErrorBox, Notice, Spinner, TeamLogo } from "../components/ui.jsx";
+import { Btn, ConfirmButton, Empty, ErrorBox, Notice, Spinner, TeamLogo } from "../components/ui.jsx";
 
 /** Season tab. Anyone can view the bracket; staff set it up, score it and reset it. */
 
@@ -85,13 +85,13 @@ function TeamLine({ team, empty }) {
   );
 }
 
-// ---------- setup ----------
+// ---------- rules (before the league ends) and setup (after) ----------
 
-function SetupForm({ standings, busy, onCreate }) {
+function SetupForm({ standings, busy, onSubmit, finished, initial, onCancel }) {
   const available = Math.min(MAX_TEAMS, standings.length);
-  const [qualifying, setQualifying] = useState(Math.min(4, available) || 4);
-  const [legs, setLegs] = useState({});
-  const [third, setThird] = useState(false);
+  const [qualifying, setQualifying] = useState(initial?.qualifying_teams ?? (Math.min(4, available) || 4));
+  const [legs, setLegs] = useState(initial?.round_legs ?? {});
+  const [third, setThird] = useState(initial?.third_place_match ?? false);
 
   const count = Number(qualifying);
   const valid = Number.isInteger(count) && count >= 2 && count <= available;
@@ -106,22 +106,24 @@ function SetupForm({ standings, busy, onCreate }) {
   };
   const chips = [2, 4, 8, 16, 32].filter((n) => n <= available);
 
-  if (available < 2) return <Empty>This season needs at least 2 teams in its table first.</Empty>;
+  if (available < 2) return <Empty>This season needs at least 2 teams first.</Empty>;
 
   function submit(e) {
     e.preventDefault();
     if (!valid) return;
-    onCreate({
+    onSubmit({
       qualifying_teams: count,
       third_place_match: thirdOn,
       round_legs: Object.fromEntries(rounds.map((r) => [r, legs[r] ?? 1])),
     });
   }
 
+  const label = finished ? "Create knockout" : initial ? "Save changes" : "Save knockout rules";
+
   return (
     <form onSubmit={submit} className="grid gap-4 md:grid-cols-[minmax(260px,360px)_1fr]">
       <div className="card p-5">
-        <h3 className="font-display text-2xl">Knockout settings</h3>
+        <h3 className="font-display text-2xl">{finished ? "Knockout settings" : "Knockout rules"}</h3>
 
         <label htmlFor="ko-q" className="eyebrow mb-1 mt-4 block">Teams that qualify</label>
         <input id="ko-q" type="number" min={2} max={available} className="input" value={qualifying}
@@ -129,7 +131,7 @@ function SetupForm({ standings, busy, onCreate }) {
         <div className="mt-2 flex flex-wrap gap-1.5">
           {chips.map((n) => (
             <button key={n} type="button" onClick={() => setQualifying(n)}
-              className={`border px-2.5 py-1 text-xs uppercase tracking-widest transition-colors ${
+              className={`border px-2.5 py-1 text-xs uppercase tracking-[0.1em] transition-colors ${
                 count === n ? "border-gold bg-burgundy" : "border-smoke/20 text-smoke/60 hover:border-gold"
               }`}>
               Top {n}
@@ -137,7 +139,7 @@ function SetupForm({ standings, busy, onCreate }) {
           ))}
         </div>
         <p className={`mt-1 text-xs ${valid ? "text-smoke/50" : "text-burgundy brightness-200"}`}>
-          {valid ? `From the final table. ${available} teams available.` : `Enter a whole number from 2 to ${available}.`}
+          {valid ? `${available} teams are in this season.` : `Enter a whole number from 2 to ${available}.`}
         </p>
 
         <div className="eyebrow mb-1 mt-5">Legs per round</div>
@@ -152,33 +154,35 @@ function SetupForm({ standings, busy, onCreate }) {
         </div>
 
         <label className={`my-4 flex items-start gap-2 text-sm ${thirdAllowed ? "" : "text-smoke/40"}`}>
-          <input type="checkbox" className="mt-1 accent-gold" checked={thirdOn}
+          <input type="checkbox" className="mt-1 accent-[var(--color-gold)]" checked={thirdOn}
             disabled={!thirdAllowed} onChange={(e) => setThird(e.target.checked)} />
           <span>Play a third-place match{!thirdAllowed && " (needs at least 4 teams)"}</span>
         </label>
 
-        <Btn type="submit" loading={busy} disabled={!valid} className="w-full">
-          {busy ? "Creating matches" : "Create knockout"}
-        </Btn>
+        <div className="flex flex-wrap gap-2">
+          <Btn type="submit" loading={busy} disabled={!valid}>{label}</Btn>
+          {onCancel && <Btn variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Btn>}
+        </div>
       </div>
 
       <div className="card p-5">
-        <h3 className="font-display text-2xl">First round</h3>
+        <h3 className="font-display text-2xl">{finished ? "First round" : "First round (projected)"}</h3>
         {valid ? (
           <>
             <p className="mt-1 text-xs text-smoke/50">
               {rounds.filter((r) => r !== "third_place").length} rounds in total. Top seeds skip round one when the
               field isn’t a power of two.
+              {!finished && " Pairings use the current table; the final seeds are fixed when the league ends."}
             </p>
             <ol className="mt-3 grid gap-2">
               {pairs.map((p, i) => (
                 <li key={i}
                   className="grid grid-cols-[24px_1fr_30px_24px_1fr] items-center gap-2 border border-smoke/10 px-3 py-2 text-sm">
                   <span className="text-center font-display text-lg text-gold">{p.home}</span>
-                  <span className="wrap-break-word">{nameOf(p.home)}</span>
+                  <span className="break-words">{nameOf(p.home)}</span>
                   <span className="text-center text-xs text-smoke/40">{p.away ? "v" : "bye"}</span>
                   <span className="text-center font-display text-lg text-gold">{p.away ?? ""}</span>
-                  <span className="wrap-break-word">{p.away ? nameOf(p.away) : ""}</span>
+                  <span className="break-words">{p.away ? nameOf(p.away) : ""}</span>
                 </li>
               ))}
             </ol>
@@ -191,11 +195,106 @@ function SetupForm({ standings, busy, onCreate }) {
   );
 }
 
-function Setup({ seasonId, busy, onCreate }) {
+function Setup({ seasonId, ...rest }) {
   const { data, loading, error } = useApi(() => api.standings(seasonId), [seasonId]);
   if (loading) return <Spinner />;
   if (error) return <ErrorBox error={error} />;
-  return <SetupForm standings={data} busy={busy} onCreate={onCreate} />;
+  return <SetupForm standings={data} {...rest} />;
+}
+
+/** Rules are saved; waiting for the league to end. */
+function PlannedPanel({ stage, seasonId, seasonFinished, canEdit, busy, onEdit, onRemove, onBuild }) {
+  const fixtures = useApi(() => api.fixtures(seasonId), [seasonId]);
+  const table = useApi(() => api.standings(seasonId), [seasonId]);
+
+  const rounds = requiredRounds(stage.qualifying_teams, stage.third_place_match);
+  const matches = fixtures.data || [];
+  const played = matches.filter((m) => m.status === "played").length;
+  const pct = matches.length ? Math.round((100 * played) / matches.length) : 0;
+  const rows = table.data || [];
+  const started = rows.some((r) => r.played > 0);
+  const top = rows.slice(0, stage.qualifying_teams);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="card p-5">
+          <div className="eyebrow">Rules saved</div>
+          <h3 className="font-display text-2xl">Knockout planned</h3>
+          <dl className="mt-3 divide-y divide-smoke/10 text-sm">
+            <div className="flex justify-between py-2">
+              <dt className="text-smoke/60">Teams that qualify</dt>
+              <dd className="font-semibold">Top {stage.qualifying_teams}</dd>
+            </div>
+            {rounds.map((r) => (
+              <div key={r} className="flex justify-between py-2">
+                <dt className="text-smoke/60">{roundLabel(r)}</dt>
+                <dd>{stage.round_legs[r] === 2 ? "2 legs" : "1 leg"}</dd>
+              </div>
+            ))}
+            {!stage.third_place_match && (
+              <div className="flex justify-between py-2">
+                <dt className="text-smoke/60">Third-place match</dt>
+                <dd>No</dd>
+              </div>
+            )}
+          </dl>
+        </div>
+
+        <div className="card p-5">
+          <div className="eyebrow">League progress</div>
+          {fixtures.loading ? (
+            <Spinner />
+          ) : matches.length === 0 ? (
+            <p className="mt-2 text-sm text-smoke/60">League fixtures haven’t been generated yet.</p>
+          ) : (
+            <>
+              <div className="mt-1 font-display text-4xl">
+                {played} <span className="text-lg text-smoke/50">of {matches.length} matches played</span>
+              </div>
+              <div className="mt-2 h-2 bg-smoke/10" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+                <div className="h-2 bg-gold" style={{ width: `${pct}%` }} />
+              </div>
+            </>
+          )}
+          <p className="mt-4 text-sm text-smoke/60">
+            The knockout fixtures are created automatically when the league ends: as soon as the last league match is
+            scored{canEdit ? ", or when you end the season" : ""}.
+          </p>
+        </div>
+      </div>
+
+      <div className="card p-5">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h3 className="font-display text-2xl">{started ? "Qualifying right now" : "Teams in this season"}</h3>
+          <span className="eyebrow">Provisional until the league ends</span>
+        </div>
+        <ol className="mt-3 grid gap-2 sm:grid-cols-2">
+          {top.map((r) => (
+            <li key={r.team_id} className="flex items-center gap-3 border border-smoke/10 px-3 py-2 text-sm">
+              <span className="w-6 text-center font-display text-lg text-gold">{r.position}</span>
+              <TeamLogo team={{ logo: r.logo, club_name: r.club_name }} size={24} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{r.club_name}</span>
+                <span className="block truncate text-xs text-smoke/50">{r.player_name}</span>
+              </span>
+              <span className="text-xs text-smoke/60">{r.points} pts</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      {canEdit && (
+        <div className="flex flex-wrap items-center gap-3">
+          {seasonFinished && (
+            <Btn loading={busy} onClick={onBuild}>Create knockout fixtures now</Btn>
+          )}
+          <Btn variant="ghost" disabled={busy} onClick={onEdit}>Edit rules</Btn>
+          <ConfirmButton confirmText="Yes, remove plan" busy={busy} onConfirm={onRemove}>Remove plan</ConfirmButton>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------- scoring ----------
@@ -242,21 +341,19 @@ function LegRow({ match, tie, canEdit, onSave }) {
     <div className="border-t border-smoke/10 py-2 first:border-t-0 first:pt-0">
       {tie.legs === 2 && <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-smoke/45">Leg {match.leg_number}</div>}
       <div className="grid grid-cols-[1fr_48px_12px_48px_1fr] items-center gap-1.5">
-        <span className="wrap-break-word
-         text-right font-medium">{match.home.player_name}</span>
+        <span className="break-words text-right font-medium">{match.home.player_name}</span>
         <input {...np} className={scoreBox} aria-label={`${match.home.player_name} goals`} value={f.hg} onChange={set("hg")} />
         <span className="text-center text-smoke/40">–</span>
         <input {...np} className={scoreBox} aria-label={`${match.away.player_name} goals`} value={f.ag} onChange={set("ag")} />
-        <span className="wrap-break-word
-         font-medium">{match.away.player_name}</span>
+        <span className="break-words font-medium">{match.away.player_name}</span>
       </div>
 
       {showPens && (
         <div className="mt-1.5 grid grid-cols-[1fr_48px_12px_48px_1fr] items-center gap-1.5">
           <span className="text-right text-xs text-smoke/50">Penalties</span>
-          <input {...np} className={`${scoreBox} text-lg!`} aria-label={`${match.home.player_name} penalties`} value={f.hp} onChange={set("hp")} />
+          <input {...np} className={`${scoreBox} !text-lg`} aria-label={`${match.home.player_name} penalties`} value={f.hp} onChange={set("hp")} />
           <span className="text-center text-smoke/40">–</span>
-          <input {...np} className={`${scoreBox} text-lg!`} aria-label={`${match.away.player_name} penalties`} value={f.ap} onChange={set("ap")} />
+          <input {...np} className={`${scoreBox} !text-lg`} aria-label={`${match.away.player_name} penalties`} value={f.ap} onChange={set("ap")} />
           <span />
         </div>
       )}
@@ -377,8 +474,10 @@ export default function Knockout() {
   const { season } = useOutletContext();
   const { user } = useAuth();
   const canEdit = Boolean(user);
+  const finished = season.status === "finished";
 
-  const [stage, setStage] = useState(undefined); // undefined = loading, null = none yet
+  const [stage, setStage] = useState(undefined); // undefined = loading, null = nothing set yet
+  const [editing, setEditing] = useState(false);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -406,10 +505,24 @@ export default function Knockout() {
     }
   }
 
-  const create = (body) =>
-    run(async () => setStage(await api.createKnockout(sid, body)), "Knockout created. Round-one matches are ready for scores.");
-  const reset = () =>
-    run(async () => { await api.resetKnockout(sid); setStage(null); }, "Knockout reset. Choose new settings.");
+  // Before the league ends the server saves the rules; afterwards it builds the bracket
+  const save = (body) =>
+    run(
+      async () => {
+        setStage(await api.createKnockout(sid, body));
+        setEditing(false);
+      },
+      finished
+        ? "Knockout created. Round-one matches are ready for scores."
+        : "Knockout rules saved. The fixtures are created automatically when the league ends."
+    );
+  const build = () => run(async () => setStage(await api.buildKnockout(sid)), "Knockout fixtures created.");
+  const reset = (text) =>
+    run(async () => {
+      await api.resetKnockout(sid);
+      setStage(null);
+      setEditing(false);
+    }, text);
 
   // Throws so the leg row can show the error beside its inputs
   async function saveScore(matchId, payload) {
@@ -418,23 +531,42 @@ export default function Knockout() {
     setNotice({ type: "ok", text: "Score saved." });
   }
 
+  let body;
+  if (stage === undefined) {
+    body = <Spinner />;
+  } else if (stage && stage.status === "planned") {
+    body =
+      editing && canEdit ? (
+        <Setup seasonId={sid} busy={busy} finished={finished} initial={stage} onSubmit={save} onCancel={() => setEditing(false)} />
+      ) : (
+        <PlannedPanel
+          stage={stage} seasonId={sid} seasonFinished={finished} canEdit={canEdit} busy={busy}
+          onEdit={() => setEditing(true)} onBuild={build} onRemove={() => reset("Knockout plan removed.")}
+        />
+      );
+  } else if (stage) {
+    body = (
+      <Bracket stage={stage} canEdit={canEdit} onSave={saveScore} onReset={() => reset("Knockout reset. Choose new settings.")} resetting={busy} />
+    );
+  } else if (!canEdit) {
+    body = <Empty>No knockout rules have been set yet.</Empty>;
+  } else {
+    body = (
+      <>
+        <p className="mb-4 max-w-2xl text-sm text-smoke/60">
+          {finished
+            ? "Pick the settings, check the pairings, then create the matches."
+            : "Set the knockout rules now, even while the league is still being played. The bracket and its fixtures are created automatically when the league ends: as soon as the last league match is scored, or when you end the season."}
+        </p>
+        <Setup seasonId={sid} busy={busy} finished={finished} onSubmit={save} />
+      </>
+    );
+  }
+
   return (
     <>
       <Notice notice={notice} />
-      {stage === undefined ? (
-        <Spinner />
-      ) : stage ? (
-        <Bracket stage={stage} canEdit={canEdit} onSave={saveScore} onReset={reset} resetting={busy} />
-      ) : !canEdit ? (
-        <Empty>The knockout hasn’t been created yet.</Empty>
-      ) : season.status !== "finished" ? (
-        <Empty>The league season must be finished before a knockout can be created.</Empty>
-      ) : (
-        <>
-          <p className="mb-4 text-sm text-smoke/60">Pick the settings, check the pairings, then create the matches.</p>
-          <Setup seasonId={sid} busy={busy} onCreate={create} />
-        </>
-      )}
+      {body}
     </>
   );
 }

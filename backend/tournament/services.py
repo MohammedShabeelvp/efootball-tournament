@@ -98,6 +98,12 @@ def end_season(season, force=False):
     season.status = "finished"
     season.save(update_fields=["status"])
 
+    # A planned knockout is built right away when the whole league was played.
+    # (After a forced end with unplayed matches it waits for a staff member to build it.)
+    if not season.matches.exclude(status="played").exists():
+        return activate_planned_knockout(season)
+    return None
+
 
 class ResultsWouldBeLost(ValueError):
     """Scrapping would delete played matches and force was not given."""
@@ -270,7 +276,19 @@ def _bracket_size(team_count):
 
 @transaction.atomic
 def setup_knockout(season, qualifying_teams, round_legs, third_place_match=False):
-    """One call: validate -> save qualifiers -> build bracket -> create matches."""
+    """
+    One call for a FINISHED league: validate -> save qualifiers -> build bracket -> create matches.
+    If rules were planned earlier, the new rules replace them and the bracket is built.
+    """
+    planned = KnockoutStage.objects.select_for_update().filter(season=season, status="planned").first()
+    if planned:
+        _check_knockout_rules(qualifying_teams, round_legs, third_place_match)
+        planned.qualifying_teams = qualifying_teams
+        planned.round_legs = round_legs
+        planned.third_place_match = third_place_match
+        planned.save(update_fields=["qualifying_teams", "round_legs", "third_place_match"])
+        return activate_planned_knockout(season)
+
     stage = create_knockout_stage(season, qualifying_teams, round_legs, third_place_match)
     return generate_knockout_bracket(stage)
 
@@ -296,13 +314,8 @@ def legs_for(stage, round_type):
     return stage.round_legs[round_type]
 
 
-@transaction.atomic
-def create_knockout_stage(season, qualifying_teams, round_legs, third_place_match=False):
-    """Validate the user's choices and store the top N teams of the league table."""
-
-    if season.status != "finished":
-        raise ValueError("The league season must be finished before creating knockouts.")
-
+def _check_knockout_rules(qualifying_teams, round_legs, third_place_match):
+    """Validate the organizer's choices. Needs no league results, so it works before the league ends."""
     if (isinstance(qualifying_teams, bool) or not isinstance(qualifying_teams, int)
             or qualifying_teams < 2):
         raise ValueError("At least 2 qualifying teams are required.")
@@ -321,6 +334,16 @@ def create_knockout_stage(season, qualifying_teams, round_legs, third_place_matc
         raise ValueError(f"Give legs (1 or 2) for exactly these rounds: {', '.join(needed)}.")
     if any(isinstance(v, bool) or v not in (1, 2) for v in round_legs.values()):
         raise ValueError("Each round must have either 1 or 2 legs.")
+
+
+@transaction.atomic
+def create_knockout_stage(season, qualifying_teams, round_legs, third_place_match=False):
+    """Validate the user's choices and store the top N teams of the league table."""
+
+    if season.status != "finished":
+        raise ValueError("The league season must be finished before creating knockouts.")
+
+    _check_knockout_rules(qualifying_teams, round_legs, third_place_match)
 
     if KnockoutStage.objects.filter(season=season).exists():
         raise ValueError("A knockout stage already exists for this season.")
@@ -360,6 +383,89 @@ def reset_knockout(stage):
     if KnockoutMatch.objects.filter(tie__stage=stage, status="played").exists():
         raise ValueError("Knockout matches have already been played, so it can't be reset.")
     stage.delete()
+
+
+# --------------------------------------------------
+# KNOCKOUT: SET THE RULES NOW, BUILD WHEN THE LEAGUE ENDS
+# --------------------------------------------------
+
+@transaction.atomic
+def plan_knockout(season, qualifying_teams, round_legs, third_place_match=False):
+    """
+    Save the knockout rules while the league is still being played.
+    The bracket is built automatically when the league ends (see finish_league_if_complete).
+    Calling this again replaces the rules of a plan that has not been built yet.
+    """
+    if season.status == "finished":
+        raise ValueError("The league is already finished, so the knockout is created directly.")
+
+    _check_knockout_rules(qualifying_teams, round_legs, third_place_match)
+
+    team_count = season.teams.count()
+    if qualifying_teams > team_count:
+        raise ValueError(f"Only {team_count} teams are in this season.")
+
+    stage = KnockoutStage.objects.select_for_update().filter(season=season).first()
+    if stage is None:
+        return KnockoutStage.objects.create(
+            season=season,
+            qualifying_teams=qualifying_teams,
+            round_legs=round_legs,
+            third_place_match=third_place_match,
+            status="planned",
+        )
+    if stage.status != "planned":
+        raise ValueError("A knockout stage already exists for this season.")
+
+    stage.qualifying_teams = qualifying_teams
+    stage.round_legs = round_legs
+    stage.third_place_match = third_place_match
+    stage.save(update_fields=["qualifying_teams", "round_legs", "third_place_match"])
+    return stage
+
+
+@transaction.atomic
+def activate_planned_knockout(season):
+    """
+    Turn a planned knockout into a real bracket from the final league table.
+    Returns the stage, or None when nothing is planned.
+    """
+    stage = KnockoutStage.objects.select_for_update().filter(season=season, status="planned").first()
+    if stage is None:
+        return None
+    if season.status != "finished":
+        raise ValueError("The league must be finished first.")
+
+    standings = compute_standings(season, include_logo=False)
+    if stage.qualifying_teams > len(standings):
+        raise ValueError(f"Only {len(standings)} teams are available for qualification.")
+
+    KnockoutEntry.objects.bulk_create([
+        KnockoutEntry(stage=stage, team_id=row["team_id"], seed=row["position"])
+        for row in standings[:stage.qualifying_teams]
+    ])
+    stage.status = "setup"
+    stage.save(update_fields=["status"])
+    return generate_knockout_bracket(stage)
+
+
+@transaction.atomic
+def finish_league_if_complete(season):
+    """
+    Call after a league score is saved. When a knockout is planned, the season is running and every
+    league match is played, this ends the season and builds the knockout.
+    Returns the new stage, or None when nothing happened.
+    """
+    if season.status != "ongoing":
+        return None
+    if not KnockoutStage.objects.filter(season=season, status="planned").exists():
+        return None
+    if not season.matches.exists() or season.matches.exclude(status="played").exists():
+        return None
+
+    season.status = "finished"
+    season.save(update_fields=["status"])
+    return activate_planned_knockout(season)
 
 
 # --------------------------------------------------

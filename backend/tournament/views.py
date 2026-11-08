@@ -25,7 +25,10 @@ from .serializers import (
 )
 from .services import (
     ResultsWouldBeLost,
+    activate_planned_knockout,
     compute_standings,
+    finish_league_if_complete,
+    plan_knockout,
     create_season,
     end_season,
     generate_fixtures,
@@ -215,11 +218,11 @@ class EndSeasonView(APIView):
         force = _flag(request, "force")
 
         try:
-            end_season(season, force=force)
+            stage = end_season(season, force=force)
         except ValueError as e:
             return _bad_request(e)
 
-        return Response(SeasonSerializer(season).data)
+        return Response({**SeasonSerializer(season).data, "knockout_created": stage is not None})
 
 
 class SeasonDetail(APIView):
@@ -290,7 +293,10 @@ class MatchScoreView(generics.UpdateAPIView):
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(MatchSerializer(instance).data)
+
+        # If a knockout is planned and this was the last league match, end the season and build it
+        stage = finish_league_if_complete(Season.objects.get(pk=instance.season_id))
+        return Response({**MatchSerializer(instance).data, "knockout_created": stage is not None})
 
 
 # ---------- knockout ----------
@@ -328,7 +334,10 @@ class SeasonKnockoutView(APIView):
         data.is_valid(raise_exception=True)
 
         try:
-            stage = setup_knockout(season, **data.validated_data)
+            if season.status == "finished":
+                stage = setup_knockout(season, **data.validated_data)   # builds the bracket now
+            else:
+                stage = plan_knockout(season, **data.validated_data)    # saves the rules for later
         except ValueError as e:
             return _bad_request(e)
 
@@ -343,6 +352,24 @@ class SeasonKnockoutView(APIView):
         except ValueError as e:
             return _bad_request(e)
         return Response(status=204)
+
+
+class KnockoutBuildView(APIView):
+    """POST /seasons/<id>/knockout/build/  build a planned knockout now (the season must be finished)."""
+
+    permission_classes = [HasRole]
+
+    def post(self, request, pk):
+        season = get_object_or_404(Season, pk=pk)
+        try:
+            stage = activate_planned_knockout(season)
+        except ValueError as e:
+            return _bad_request(e)
+        if stage is None:
+            return Response({"detail": "No planned knockout for this season."}, status=404)
+
+        stage = KnockoutStageSerializer.setup_eager_loading(KnockoutStage.objects.filter(pk=stage.pk)).first()
+        return Response(KnockoutStageSerializer(stage).data)
 
 
 class KnockoutMatchScoreView(APIView):

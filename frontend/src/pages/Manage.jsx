@@ -53,11 +53,11 @@ function TeamFields({ prefix, team }) {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label htmlFor={id("logo")} className={LABEL}>Logo</label>
-          <input id={id("logo")} name="logo" type="file" accept="image/*" className="input px-2! py-1.5! text-xs" />
+          <input id={id("logo")} name="logo" type="file" accept="image/*" className="input !px-2 !py-1.5 text-xs" />
         </div>
         <div>
           <label htmlFor={id("lineup_image")} className={LABEL}>Lineup</label>
-          <input id={id("lineup_image")} name="lineup_image" type="file" accept="image/*" className="input px-2! py-1.5! text-xs" />
+          <input id={id("lineup_image")} name="lineup_image" type="file" accept="image/*" className="input !px-2 !py-1.5 text-xs" />
         </div>
       </div>
     </>
@@ -326,11 +326,16 @@ function SeasonRow({ tid, season, onChanged, setNotice }) {
         {season.status === "ongoing" && (
           <>
             <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" className="accent-gold" checked={force} onChange={(e) => setForce(e.target.checked)} />
+              <input type="checkbox" className="accent-[var(--color-gold)]" checked={force} onChange={(e) => setForce(e.target.checked)} />
               Even if matches are unplayed
             </label>
             <ConfirmButton confirmText="Yes, end season" busy={busy}
-              onConfirm={() => act(() => api.endSeason(season.id, force), "Season ended.")}>
+              onConfirm={() =>
+                act(
+                  () => api.endSeason(season.id, force),
+                  (r) => (r.knockout_created ? "Season ended. The knockout fixtures have been created." : "Season ended.")
+                )
+              }>
               End season
             </ConfirmButton>
           </>
