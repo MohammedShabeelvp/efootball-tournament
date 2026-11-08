@@ -189,10 +189,25 @@ if os.environ.get("RENDER"):
     WHITENOISE_ROOT = BASE_DIR / "frontend_dist"          # served from the site root: /assets/..., /favicon...
     TEMPLATES[0]["DIRS"] = [BASE_DIR / "frontend_dist"]   # lets Django hand out index.html for deep links
 
+    # Tidy the Cloudinary value (a pasted "CLOUDINARY_URL=" prefix or quotes are common slips)
+    # and stop with a readable message if it is still wrong.
+    _cloud = os.environ.get("CLOUDINARY_URL", "").strip().strip("\"'")
+    if _cloud.startswith("CLOUDINARY_URL="):
+        _cloud = _cloud.split("=", 1)[1].strip().strip("\"'")
+    if not _cloud.startswith("cloudinary://") or "<" in _cloud or "*" in _cloud:
+        from django.core.exceptions import ImproperlyConfigured
+
+        raise ImproperlyConfigured(
+            "CLOUDINARY_URL must look like cloudinary://API_KEY:API_SECRET@CLOUD_NAME "
+            "(real values: no <angle brackets>, no ****, no quotes, no spaces)."
+        )
+    os.environ["CLOUDINARY_URL"] = _cloud
+
     # Uploaded logos and lineups go to Cloudinary (it reads the CLOUDINARY_URL variable),
     # because a free server's own disk is wiped on every restart.
-    INSTALLED_APPS.insert(0, "cloudinary_storage")  # must come before django.contrib.staticfiles
-    INSTALLED_APPS.append("cloudinary")
+    # Note: do NOT add "cloudinary_storage" or "cloudinary" to INSTALLED_APPS. That package replaces
+    # Django's collectstatic command with an old version that crashes on Django 5.1+. The storage
+    # class below works without being listed there.
     STORAGES = {
         "default": {"BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage"},
         "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
