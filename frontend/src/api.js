@@ -238,6 +238,8 @@ export const api = {
   knockout: (seasonId) => request(`/seasons/${seasonId}/knockout/`),
   createKnockout: (seasonId, body) =>
     request(`/seasons/${seasonId}/knockout/`, { method: "POST", body }),
+  arrangeKnockout: (seasonId, body) =>
+    request(`/seasons/${seasonId}/knockout/arrange/`, { method: "POST", body }),
   resetKnockout: (seasonId) =>
     request(`/seasons/${seasonId}/knockout/`, { method: "DELETE" }),
   setKnockoutScore: (matchId, body) =>

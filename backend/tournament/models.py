@@ -144,6 +144,9 @@ class KnockoutStage(models.Model):
     # {"quarter_final": 1, "semi_final": 2, "final": 1, "third_place": 1}
     round_legs = models.JSONField(default=dict)
     third_place_match = models.BooleanField(default=False)
+    # How qualified teams are placed in the bracket: by league table, random draw, or by hand
+    SEEDING = [("table", "League table"), ("random", "Random draw"), ("manual", "Manual")]
+    seeding = models.CharField(max_length=10, choices=SEEDING, default="table")
     status = models.CharField(max_length=20, choices=STATUS, default="setup")
     champion = models.ForeignKey(
         Team, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"

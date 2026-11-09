@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 from .models import KnockoutMatch, KnockoutStage, Match, Season, Team, Tournament
 from .permissions import HasRole, RoleOrReadOnly, role_of
 from .serializers import (
+    KnockoutArrangeSerializer,
     KnockoutMatchScoreSerializer,
     KnockoutSetupSerializer,
     KnockoutStageSerializer,
@@ -29,6 +30,7 @@ from .services import (
     compute_standings,
     finish_league_if_complete,
     plan_knockout,
+    rearrange_knockout,
     create_season,
     end_season,
     generate_fixtures,
@@ -367,6 +369,33 @@ class KnockoutBuildView(APIView):
             return _bad_request(e)
         if stage is None:
             return Response({"detail": "No planned knockout for this season."}, status=404)
+
+        stage = KnockoutStageSerializer.setup_eager_loading(KnockoutStage.objects.filter(pk=stage.pk)).first()
+        return Response(KnockoutStageSerializer(stage).data)
+
+
+class KnockoutArrangeView(APIView):
+    """
+    POST /seasons/<id>/knockout/arrange/
+         {"slots": [teamId | null, ...]}   place teams by hand (two per first-round tie, in order)
+         {"random": true}                  draw the teams again at random
+    Only possible until a knockout match has been played.
+    """
+
+    permission_classes = [HasRole]
+
+    def post(self, request, pk):
+        stage = KnockoutStage.objects.filter(season_id=pk).first()
+        if stage is None:
+            return Response({"detail": "No knockout stage for this season."}, status=404)
+
+        data = KnockoutArrangeSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+
+        try:
+            stage = rearrange_knockout(stage, data.validated_data.get("slots"))
+        except ValueError as e:
+            return _bad_request(e)
 
         stage = KnockoutStageSerializer.setup_eager_loading(KnockoutStage.objects.filter(pk=stage.pk)).first()
         return Response(KnockoutStageSerializer(stage).data)

@@ -55,6 +55,13 @@ function firstRoundPairs(teams) {
 const val = (v) => (v == null ? "" : String(v));
 const scoreBox = "input !px-1 text-center font-display text-2xl font-semibold";
 
+const SEEDING_OPTIONS = [
+  { value: "table", title: "By league table", text: "Standard seeding: the top seed meets the lowest qualifier, and top seeds get any byes." },
+  { value: "random", title: "Random draw", text: "Teams are drawn at random when the bracket is created. Top seeds still keep any byes." },
+  { value: "manual", title: "Place them myself", text: "The bracket is created from the table, then you arrange every team by hand." },
+];
+const SEEDING_LABEL = { table: "By league table", random: "Random draw", manual: "Placed by hand" };
+
 // ---------- pieces ----------
 
 function Segmented({ value, onChange, label }) {
@@ -92,6 +99,7 @@ function SetupForm({ standings, busy, onSubmit, finished, initial, onCancel }) {
   const [qualifying, setQualifying] = useState(initial?.qualifying_teams ?? (Math.min(4, available) || 4));
   const [legs, setLegs] = useState(initial?.round_legs ?? {});
   const [third, setThird] = useState(initial?.third_place_match ?? false);
+  const [seeding, setSeeding] = useState(initial?.seeding ?? "table");
 
   const count = Number(qualifying);
   const valid = Number.isInteger(count) && count >= 2 && count <= available;
@@ -114,6 +122,7 @@ function SetupForm({ standings, busy, onSubmit, finished, initial, onCancel }) {
     onSubmit({
       qualifying_teams: count,
       third_place_match: thirdOn,
+      seeding,
       round_legs: Object.fromEntries(rounds.map((r) => [r, legs[r] ?? 1])),
     });
   }
@@ -159,6 +168,22 @@ function SetupForm({ standings, busy, onSubmit, finished, initial, onCancel }) {
           <span>Play a third-place match{!thirdAllowed && " (needs at least 4 teams)"}</span>
         </label>
 
+        <div className="eyebrow mb-1 mt-5">How are teams placed?</div>
+        <div className="mb-5 grid gap-2" role="radiogroup" aria-label="Team placement">
+          {SEEDING_OPTIONS.map((o) => (
+            <button
+              key={o.value} type="button" role="radio" aria-checked={seeding === o.value}
+              onClick={() => setSeeding(o.value)}
+              className={`border p-3 text-left transition-colors ${
+                seeding === o.value ? "border-gold bg-gold/10" : "border-smoke/15 hover:border-gold/60"
+              }`}
+            >
+              <span className="block text-sm font-medium">{o.title}</span>
+              <span className="block text-xs text-smoke/60">{o.text}</span>
+            </button>
+          ))}
+        </div>
+
         <div className="flex flex-wrap gap-2">
           <Btn type="submit" loading={busy} disabled={!valid}>{label}</Btn>
           {onCancel && <Btn variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Btn>}
@@ -174,6 +199,13 @@ function SetupForm({ standings, busy, onSubmit, finished, initial, onCancel }) {
               field isn’t a power of two.
               {!finished && " Pairings use the current table; the final seeds are fixed when the league ends."}
             </p>
+            {seeding !== "table" && (
+              <p className="mt-2 border border-gold/30 bg-gold/10 px-3 py-2 text-xs text-smoke/80">
+                {seeding === "random"
+                  ? "Teams are drawn at random when the bracket is created, and top seeds keep their byes. The pairings below show standard seeding for reference."
+                  : "You arrange the teams yourself after the bracket is created. The pairings below show the starting arrangement."}
+              </p>
+            )}
             <ol className="mt-3 grid gap-2">
               {pairs.map((p, i) => (
                 <li key={i}
@@ -225,6 +257,10 @@ function PlannedPanel({ stage, seasonId, seasonFinished, canEdit, busy, onEdit, 
             <div className="flex justify-between py-2">
               <dt className="text-smoke/60">Teams that qualify</dt>
               <dd className="font-semibold">Top {stage.qualifying_teams}</dd>
+            </div>
+            <div className="flex justify-between py-2">
+              <dt className="text-smoke/60">Team placement</dt>
+              <dd>{SEEDING_LABEL[stage.seeding || "table"]}</dd>
             </div>
             {rounds.map((r) => (
               <div key={r} className="flex justify-between py-2">
@@ -412,7 +448,86 @@ function TieCard({ tie, canEdit, onSave }) {
   );
 }
 
-function Bracket({ stage, canEdit, onSave, onReset, resetting }) {
+/** Move teams between first-round places, or draw again. Only until a knockout match is played. */
+function ArrangePanel({ stage, busy, onArrange }) {
+  const firstRound = stage.rounds[0]?.ties || [];
+  const start = firstRound.flatMap((t) => [t.home?.id ?? null, t.away?.id ?? null]);
+  const [open, setOpen] = useState(stage.seeding === "manual");
+  const [slots, setSlots] = useState(start);
+
+  const teams = stage.entries.map((e) => ({ ...e.team, seed: e.seed }));
+  const dirty = slots.some((v, i) => v !== start[i]);
+
+  // Choosing a team that is already placed swaps the two places
+  function place(index, value) {
+    const id = Number(value);
+    setSlots((prev) => {
+      const next = [...prev];
+      const other = next.indexOf(id);
+      if (other !== -1) next[other] = next[index];
+      next[index] = id;
+      return next;
+    });
+  }
+
+  return (
+    <div className="card mb-5 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="eyebrow">Team placement · {SEEDING_LABEL[stage.seeding || "table"]}</div>
+          <p className="text-sm text-smoke/60">
+            {stage.seeding === "manual"
+              ? "You chose manual placement: arrange the teams, then start scoring."
+              : "You can still move teams around until the first knockout match is played."}
+          </p>
+        </div>
+        <Btn variant="ghost" size="sm" onClick={() => setOpen((o) => !o)}>{open ? "Hide" : "Arrange teams"}</Btn>
+      </div>
+
+      {open && (
+        <>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {firstRound.map((tie, t) => (
+              <div key={tie.id} className="border border-smoke/10 p-3">
+                <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-smoke/45">{tieTitle(tie)}</div>
+                {[0, 1].map((side) => {
+                  const index = t * 2 + side;
+                  return start[index] === null ? (
+                    <div key={side} className="py-2 text-sm text-smoke/45">Bye</div>
+                  ) : (
+                    <select
+                      key={side} className="input mb-2"
+                      aria-label={`${tieTitle(tie)} ${side ? "away" : "home"} team`}
+                      value={slots[index] ?? ""} onChange={(e) => place(index, e.target.value)}
+                    >
+                      {teams.map((tm) => (
+                        <option key={tm.id} value={tm.id}>{tm.club_name} ({tm.player_name}) · seed {tm.seed}</option>
+                      ))}
+                    </select>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-smoke/50">
+            Picking a team that is already placed swaps the two. The team opposite a bye moves on automatically.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Btn loading={busy} disabled={!dirty} onClick={() => onArrange({ slots })}>Save placement</Btn>
+            <Btn variant="ghost" disabled={busy || !dirty} onClick={() => setSlots(start)}>Undo changes</Btn>
+            <ConfirmButton confirmText="Yes, draw again" busy={busy} onConfirm={() => onArrange({ random: true })}>
+              Draw again at random
+            </ConfirmButton>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Bracket({ stage, canEdit, onSave, onReset, resetting, onArrange, busy }) {
+  const anyPlayed = stage.rounds.some((r) => r.ties.some((t) => (t.matches || []).some((m) => m.status === "played")));
+  const slotKey = (stage.rounds[0]?.ties || []).map((t) => `${t.home?.id}-${t.away?.id}`).join("|");
   const [confirming, setConfirming] = useState(false);
   const third = stage.rounds.find((r) => r.round_type === "third_place");
   const columns = stage.rounds.filter((r) => r.round_type !== "third_place");
@@ -445,6 +560,10 @@ function Bracket({ stage, canEdit, onSave, onReset, resetting }) {
             <div className="text-xs text-smoke/55">{stage.champion.club_name}</div>
           </div>
         </div>
+      )}
+
+      {canEdit && !anyPlayed && stage.rounds.length > 0 && (
+        <ArrangePanel key={slotKey} stage={stage} busy={busy} onArrange={onArrange} />
       )}
 
       <div className="flex gap-4 overflow-x-auto pb-3">
@@ -517,6 +636,11 @@ export default function Knockout() {
         : "Knockout rules saved. The fixtures are created automatically when the league ends."
     );
   const build = () => run(async () => setStage(await api.buildKnockout(sid)), "Knockout fixtures created.");
+  const arrange = (body) =>
+    run(
+      async () => setStage(await api.arrangeKnockout(sid, body)),
+      body.random ? "Teams drawn at random." : "Team placement saved."
+    );
   const reset = (text) =>
     run(async () => {
       await api.resetKnockout(sid);
@@ -546,7 +670,7 @@ export default function Knockout() {
       );
   } else if (stage) {
     body = (
-      <Bracket stage={stage} canEdit={canEdit} onSave={saveScore} onReset={() => reset("Knockout reset. Choose new settings.")} resetting={busy} />
+      <Bracket stage={stage} canEdit={canEdit} onSave={saveScore} onReset={() => reset("Knockout reset. Choose new settings.")} resetting={busy} onArrange={arrange} busy={busy} />
     );
   } else if (!canEdit) {
     body = <Empty>No knockout rules have been set yet.</Empty>;

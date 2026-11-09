@@ -1,5 +1,7 @@
 """Pure business logic: fixture generation, season management, standings and knockouts."""
 
+import random
+
 from django.db import transaction
 from django.db.models import Count, Max, Q
 
@@ -13,6 +15,7 @@ from .models import (
 )
 
 MAX_KNOCKOUT_TEAMS = 64
+SEEDING_MODES = ("table", "random", "manual")
 
 
 # --------------------------------------------------
@@ -275,21 +278,22 @@ def _bracket_size(team_count):
 
 
 @transaction.atomic
-def setup_knockout(season, qualifying_teams, round_legs, third_place_match=False):
+def setup_knockout(season, qualifying_teams, round_legs, third_place_match=False, seeding="table"):
     """
     One call for a FINISHED league: validate -> save qualifiers -> build bracket -> create matches.
     If rules were planned earlier, the new rules replace them and the bracket is built.
     """
     planned = KnockoutStage.objects.select_for_update().filter(season=season, status="planned").first()
     if planned:
-        _check_knockout_rules(qualifying_teams, round_legs, third_place_match)
+        _check_knockout_rules(qualifying_teams, round_legs, third_place_match, seeding)
         planned.qualifying_teams = qualifying_teams
         planned.round_legs = round_legs
         planned.third_place_match = third_place_match
-        planned.save(update_fields=["qualifying_teams", "round_legs", "third_place_match"])
+        planned.seeding = seeding
+        planned.save(update_fields=["qualifying_teams", "round_legs", "third_place_match", "seeding"])
         return activate_planned_knockout(season)
 
-    stage = create_knockout_stage(season, qualifying_teams, round_legs, third_place_match)
+    stage = create_knockout_stage(season, qualifying_teams, round_legs, third_place_match, seeding)
     return generate_knockout_bracket(stage)
 
 
@@ -314,7 +318,7 @@ def legs_for(stage, round_type):
     return stage.round_legs[round_type]
 
 
-def _check_knockout_rules(qualifying_teams, round_legs, third_place_match):
+def _check_knockout_rules(qualifying_teams, round_legs, third_place_match, seeding="table"):
     """Validate the organizer's choices. Needs no league results, so it works before the league ends."""
     if (isinstance(qualifying_teams, bool) or not isinstance(qualifying_teams, int)
             or qualifying_teams < 2):
@@ -334,16 +338,18 @@ def _check_knockout_rules(qualifying_teams, round_legs, third_place_match):
         raise ValueError(f"Give legs (1 or 2) for exactly these rounds: {', '.join(needed)}.")
     if any(isinstance(v, bool) or v not in (1, 2) for v in round_legs.values()):
         raise ValueError("Each round must have either 1 or 2 legs.")
+    if seeding not in SEEDING_MODES:
+        raise ValueError("Team placement must be the league table, a random draw, or manual.")
 
 
 @transaction.atomic
-def create_knockout_stage(season, qualifying_teams, round_legs, third_place_match=False):
+def create_knockout_stage(season, qualifying_teams, round_legs, third_place_match=False, seeding="table"):
     """Validate the user's choices and store the top N teams of the league table."""
 
     if season.status != "finished":
         raise ValueError("The league season must be finished before creating knockouts.")
 
-    _check_knockout_rules(qualifying_teams, round_legs, third_place_match)
+    _check_knockout_rules(qualifying_teams, round_legs, third_place_match, seeding)
 
     if KnockoutStage.objects.filter(season=season).exists():
         raise ValueError("A knockout stage already exists for this season.")
@@ -367,6 +373,7 @@ def create_knockout_stage(season, qualifying_teams, round_legs, third_place_matc
         qualifying_teams=qualifying_teams,
         round_legs=round_legs,
         third_place_match=third_place_match,
+        seeding=seeding,
         status="setup",
     )
 
@@ -385,12 +392,45 @@ def reset_knockout(stage):
     stage.delete()
 
 
+@transaction.atomic
+def rearrange_knockout(stage, slot_team_ids=None):
+    """
+    Rebuild the bracket with teams placed by hand (slot_team_ids: two entries per first-round tie,
+    in order, None = bye) or drawn again at random (slot_team_ids=None).
+    Only possible until a knockout match has been played.
+    """
+    stage = KnockoutStage.objects.select_for_update().get(pk=stage.pk)
+    if stage.status == "planned":
+        raise ValueError("The bracket hasn't been created yet.")
+    if KnockoutMatch.objects.filter(tie__stage=stage, status="played").exists():
+        raise ValueError("Knockout matches have already been played, so the teams can't be moved.")
+
+    entry_ids = set(stage.entries.values_list("team_id", flat=True))
+    size = _bracket_size(len(entry_ids))
+
+    if slot_team_ids is not None:
+        if len(slot_team_ids) != size:
+            raise ValueError(f"Expected {size} places for this bracket.")
+        placed = [i for i in slot_team_ids if i is not None]
+        if len(placed) != len(set(placed)) or set(placed) != entry_ids:
+            raise ValueError("Every qualified team must be placed exactly once.")
+        for i in range(0, size, 2):
+            if slot_team_ids[i] is None and slot_team_ids[i + 1] is None:
+                raise ValueError("A tie can't have two byes.")
+
+    stage.ties.all().delete()
+    stage.champion = None
+    stage.status = "setup"
+    stage.save(update_fields=["champion", "status"])
+    return generate_knockout_bracket(stage, slot_team_ids=slot_team_ids, random_draw=slot_team_ids is None)
+
+
 # --------------------------------------------------
 # KNOCKOUT: SET THE RULES NOW, BUILD WHEN THE LEAGUE ENDS
 # --------------------------------------------------
 
 @transaction.atomic
-def plan_knockout(season, qualifying_teams, round_legs, third_place_match=False):
+def plan_knockout(season, qualifying_teams, round_legs, third_place_match=False, seeding="table"):
     """
     Save the knockout rules while the league is still being played.
     The bracket is built automatically when the league ends (see finish_league_if_complete).
@@ -399,7 +439,7 @@ def plan_knockout(season, qualifying_teams, round_legs, third_place_match=False)
     if season.status == "finished":
         raise ValueError("The league is already finished, so the knockout is created directly.")
 
-    _check_knockout_rules(qualifying_teams, round_legs, third_place_match)
+    _check_knockout_rules(qualifying_teams, round_legs, third_place_match, seeding)
 
     team_count = season.teams.count()
     if qualifying_teams > team_count:
@@ -412,6 +452,7 @@ def plan_knockout(season, qualifying_teams, round_legs, third_place_match=False)
             qualifying_teams=qualifying_teams,
             round_legs=round_legs,
             third_place_match=third_place_match,
+            seeding=seeding,
             status="planned",
         )
     if stage.status != "planned":
@@ -420,7 +461,8 @@ def plan_knockout(season, qualifying_teams, round_legs, third_place_match=False)
     stage.qualifying_teams = qualifying_teams
     stage.round_legs = round_legs
     stage.third_place_match = third_place_match
-    stage.save(update_fields=["qualifying_teams", "round_legs", "third_place_match"])
+    stage.seeding = seeding
+    stage.save(update_fields=["qualifying_teams", "round_legs", "third_place_match", "seeding"])
     return stage
 
 
@@ -481,6 +523,25 @@ def get_seed_order(size):
     return order
 
 
+def _first_round_slots(entries, bracket_size, slot_team_ids=None, random_draw=False):
+    """The team (or None for a bye) in each first-round slot, in bracket order."""
+    teams = {e.team_id: e.team for e in entries}
+    if slot_team_ids is not None:                          # placed by hand
+        return [teams[i] if i is not None else None for i in slot_team_ids]
+
+    order = get_seed_order(bracket_size)
+    by_seed = {e.seed: e.team for e in entries}
+    slots = [by_seed.get(seed) for seed in order]          # standard seeding
+    if random_draw:
+        byes = bracket_size - len(entries)                 # seeds 1..byes keep their byes
+        movable = [i for i, seed in enumerate(order) if seed in by_seed and seed > byes]
+        drawn = [slots[i] for i in movable]
+        random.shuffle(drawn)
+        for i, team in zip(movable, drawn):
+            slots[i] = team
+    return slots
+
+
 def create_knockout_matches(tie, legs_per_tie):
     """Create the legs of a tie once both teams are known. Leg 2 swaps venues."""
     if not tie.home_id or not tie.away_id:
@@ -502,7 +563,7 @@ def create_knockout_matches(tie, legs_per_tie):
 
 
 @transaction.atomic
-def generate_knockout_bracket(stage):
+def generate_knockout_bracket(stage, slot_team_ids=None, random_draw=False):
     """
     Build the whole bracket from the stage settings.
     Rounded up to a power of two; top seeds get byes. Round-1 matches are
@@ -523,8 +584,7 @@ def generate_knockout_bracket(stage):
         raise ValueError("At least two qualified teams are required.")
 
     bracket_size = _bracket_size(team_count)
-    teams_by_seed = {e.seed: e.team for e in entries}
-    seed_order = get_seed_order(bracket_size)
+    slots = _first_round_slots(entries, bracket_size, slot_team_ids, random_draw or stage.seeding == "random")
 
     # ---- Round 1 ----
     first_round_type = get_round_type(bracket_size)
@@ -534,8 +594,8 @@ def generate_knockout_bracket(stage):
             round_number=1,
             round_type=first_round_type,
             tie_number=i // 2 + 1,
-            home=teams_by_seed.get(seed_order[i]),
-            away=teams_by_seed.get(seed_order[i + 1]),
+            home=slots[i],
+            away=slots[i + 1],
         )
         for i in range(0, bracket_size, 2)
     ]

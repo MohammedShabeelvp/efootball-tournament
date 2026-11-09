@@ -319,8 +319,22 @@ class KnockoutSetupSerializer(serializers.Serializer):
 
     qualifying_teams = serializers.IntegerField(min_value=2, max_value=MAX_KNOCKOUT_TEAMS)
     third_place_match = serializers.BooleanField(default=False)
+    seeding = serializers.ChoiceField(choices=["table", "random", "manual"], default="table")
     # e.g. {"quarter_final": 1, "semi_final": 2, "final": 1}
     round_legs = serializers.DictField(child=serializers.ChoiceField(choices=[1, 2]))
+
+
+class KnockoutArrangeSerializer(serializers.Serializer):
+    """Either place teams by hand (slots) or ask for a new random draw."""
+
+    # two entries per first-round tie, in order; null = bye
+    slots = serializers.ListField(child=serializers.IntegerField(allow_null=True), required=False)
+    random = serializers.BooleanField(default=False)
+
+    def validate(self, attrs):
+        if bool(attrs.get("slots")) == bool(attrs.get("random")):
+            raise serializers.ValidationError("Send either slots or random: true.")
+        return attrs
 
 
 class KnockoutMatchScoreSerializer(serializers.Serializer):
@@ -439,6 +453,7 @@ class KnockoutStageSerializer(serializers.ModelSerializer):
             "qualifying_teams",
             "round_legs",
             "third_place_match",
+            "seeding",
             "status",
             "champion",
             "entries",

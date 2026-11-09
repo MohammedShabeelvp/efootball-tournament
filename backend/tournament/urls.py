@@ -21,6 +21,7 @@ urlpatterns = [
     path("seasons/<int:pk>/generate-fixtures/", views.GenerateFixturesView.as_view(), name="generate-fixtures"),
     path("seasons/<int:pk>/end/", views.EndSeasonView.as_view(), name="end-season"),
     path("seasons/<int:pk>/knockout/", views.SeasonKnockoutView.as_view(), name="season-knockout"),
+    path("seasons/<int:pk>/knockout/arrange/", views.KnockoutArrangeView.as_view(), name="season-knockout-arrange"),
     path("seasons/<int:pk>/knockout/build/", views.KnockoutBuildView.as_view(), name="season-knockout-build"),
 
     # Teams
